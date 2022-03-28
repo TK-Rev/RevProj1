@@ -4,7 +4,85 @@ import java.io._
 
 object Sparky {
 
-  
+  def RefNextGames(util:SparkSession): Unit = {
+    val html = Source.fromURL("https://statsapi.web.nhl.com/api/v1/teams?expand=team.schedule.next")
+    val s = html.mkString
+    val resu = s.split("\\\n")
+
+    var cur = ""
+    var tote = ""
+
+
+    var idtemp = ""
+    var tempT = ""
+
+    var gampk = ""
+    var awaid = 0
+    var homid = 0
+    var date = ""
+    var est = ""
+    var cst = ""
+    var mst = ""
+    var pst = ""
+
+    resu.foreach(e=> {
+      val f = e.trim
+
+      if (f.contains("\"gamePk\"")) {
+        gampk = f.split(":")(1).trim
+        gampk = gampk.substring(0, gampk.length - 1)
+      } else if (f.contains("\"date\" : ")) {
+        date = f.split(":")(1).trim
+        date = date.substring(1, date.length - 2)
+      } else if (f.contains("\"gameDate\" :")) {
+        tempT = f.split("T")(1) // 23:00:00Z",
+        tempT = tempT.substring(0, tempT.length - 3) // 23:00:00
+        var holdT = tempT.split(":") // [23] [00] [00]
+        if (holdT(0).toInt < 4) holdT(0) = (holdT(0).toInt + 24).toString
+        est = s"${holdT(0).toInt - 4}:${holdT(1)}"
+        if (holdT(0).toInt < 5) holdT(0) = (holdT(0).toInt + 24).toString
+        cst = s"${holdT(0).toInt - 5}:${holdT(1)}"
+        if (holdT(0).toInt < 6) holdT(0) = (holdT(0).toInt + 24).toString
+        mst = s"${holdT(0).toInt - 6}:${holdT(1)}"
+        if (holdT(0).toInt < 7) holdT(0) = (holdT(0).toInt + 24).toString
+        pst = s"${holdT(0).toInt - 7}:${holdT(1)}"
+      } else if (f == "\"away\" : {") {
+        cur = "away"
+      } else if (f == "\"home\" : {") {
+        cur = "home"
+      } else if(f == "}, {"||f.contains("venue")) {
+        cur = ""
+      }
+
+      if (cur=="away") {
+        if(f.contains("\"id\"")){
+          idtemp = f.split(":")(1).trim
+          awaid = idtemp.substring(0,idtemp.length-1).toInt
+        }
+      }else if (cur=="home") {
+        if(f.contains("\"id\"")){
+          idtemp = f.split(":")(1).trim
+          homid = idtemp.substring(0,idtemp.length-1).toInt
+
+          if(tote!=""){
+            tote+=s"\n$gampk,$awaid,$homid,$date,$est,$cst,$mst,$pst"
+          }else{
+            tote+=s"$gampk,$awaid,$homid,$date,$est,$cst,$mst,$pst"
+          }
+        }
+      }
+      //println(cur)
+    })
+
+    val file = new File("nextGamesFile.csv")
+    val bw = new BufferedWriter(new FileWriter(file))
+    bw.write(tote)
+    bw.close()
+
+    util.sql("DROP TABLE IF EXISTS nextGames")
+    util.sql("CREATE TABLE nextGames(GameID String,AwayID int,HomeID int,Date String,EST string,CST string,MST string,PST string) row format delimited fields terminated by ','")
+    util.sql("LOAD DATA LOCAL INPATH 'nextGamesFile.csv' INTO TABLE nextGames")
+  }
   def RefRoster(util:SparkSession): Unit ={
     val html = Source.fromURL("https://statsapi.web.nhl.com/api/v1/teams?expand=team.roster")
     val s = html.mkString
@@ -149,13 +227,14 @@ object Sparky {
   def Refresher(util:SparkSession,cate:String): Unit ={
     cate match {
       case "teams" => RefTeams(util)
-      case "next game" => //
+      case "next game" => RefNextGames(util)
       case "last game" => //
       case "roster" => RefRoster(util)
       case "standings" => //
       case "all" => {
         RefTeams(util)
         RefRoster(util)
+        RefNextGames(util)
       }
     }
   }
@@ -187,8 +266,13 @@ object Sparky {
     spark.sparkContext.setLogLevel("ERROR")
 
     Refresher(spark,"all")
-    spark.sql("SELECT * FROM teams").show()
+    spark.sql("SELECT * FROM teams").show(32,false)
     // spark.sql("SELECT * FROM players").show(900, false)
-    spark.sql("SELECT players.ID, players.FullName, players.Position, players.JerseyNumber, teams.Team FROM players INNER JOIN teams ON players.TeamID = teams.ID").show(900,false)
+    spark.sql("SELECT players.ID, players.FullName, players.Position, players.JerseyNumber, teams.Team FROM players INNER JOIN teams ON players.TeamID = teams.ID").show(false)
+    spark.sql("SELECT DISTINCT nextGames.Date, teams.Team as Away, teams2.Team as Home, nextGames.est as Time FROM nextGames " +
+      "INNER JOIN teams ON nextGames.AwayID == teams.ID " +
+      "INNER JOIN teams as teams2 ON nextGames.HomeID == teams2.ID").show(false)
+    // yes, this is messy.
+    // No, there's not a better way to do it.
   }
 }
