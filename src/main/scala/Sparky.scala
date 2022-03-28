@@ -4,6 +4,79 @@ import java.io._
 
 object Sparky {
 
+  
+  def RefRoster(util:SparkSession): Unit ={
+    val html = Source.fromURL("https://statsapi.web.nhl.com/api/v1/teams?expand=team.roster")
+    val s = html.mkString
+    val resu = s.split("\\\n")
+
+    var cur = ""
+    var tote = ""
+
+    var idtemp = ""
+    var teamid = 0
+    var playid = 0
+    var nameFull = ""
+    var nameF = ""
+    var nameL = ""
+    var jersey = "0"
+    var position = ""
+
+    resu.foreach(e=>{
+      val f = e.trim
+
+      if(f=="\"teams\" : [ {"||f=="}, {") {
+        cur = "team"
+      }else{
+        if(f.contains(": {")) {
+          cur = f.split(":")(0).trim
+        }
+      }
+
+      cur match {
+        case "team" => {
+          if(f.contains("\"id\"")){
+            idtemp = f.split(":")(1).trim
+            teamid = idtemp.substring(0,idtemp.length-1).toInt
+          }
+        }
+        case "\"person\"" => {
+          if(f.contains("\"id\"")){
+            idtemp = f.split(":")(1).trim
+            playid = idtemp.substring(0,idtemp.length-1).toInt
+          }else if(f.contains("\"fullName\"")){
+            nameFull = f.split(":")(1).trim
+            nameFull = nameFull.substring(1,nameFull.length-2)
+          }else if(f.contains("\"jerseyNumber\"")){
+            jersey = f.split(":")(1).trim
+            jersey = jersey.substring(1,jersey.length-2)
+          }
+        }
+        case "\"position\"" => {
+          if(f.contains("\"name\"")){
+            position = f.split(":")(1).trim
+            position = position.substring(1,position.length-2)
+
+            if(tote!=""){
+              tote+=s"\n$playid,$teamid,$nameFull,$position,$jersey"
+            } else {
+              tote+=s"$playid,$teamid,$nameFull,$position,$jersey"
+            }
+          }
+        }
+        case _ => // do nothing
+      }
+    })
+
+    val file = new File("playersFile.csv")
+    val bw = new BufferedWriter(new FileWriter(file))
+    bw.write(tote)
+    bw.close()
+
+    util.sql("DROP TABLE IF EXISTS players")
+    util.sql("CREATE TABLE players(ID int,TeamID int,FullName String,Position String,JerseyNumber String) row format delimited fields terminated by ','")
+    util.sql("LOAD DATA LOCAL INPATH 'playersFile.csv' INTO TABLE players")
+  }
   def RefTeams(util:SparkSession): Unit ={
     val html = Source.fromURL("https://statsapi.web.nhl.com/api/v1/teams")
     val s = html.mkString
@@ -71,7 +144,6 @@ object Sparky {
     util.sql("DROP TABLE IF EXISTS teams")
     util.sql("CREATE TABLE teams(ID Int,Team String,ABB String,Location String,Name String) row format delimited fields terminated by ','")
     util.sql("LOAD DATA LOCAL INPATH 'teamsFile.csv' INTO TABLE teams")
-    // util.sql("SELECT * FROM teams").show(32)
   }
 
   def Refresher(util:SparkSession,cate:String): Unit ={
@@ -79,10 +151,11 @@ object Sparky {
       case "teams" => RefTeams(util)
       case "next game" => //
       case "last game" => //
-      case "roster" => //
+      case "roster" => RefRoster(util)
       case "standings" => //
       case "all" => {
         RefTeams(util)
+        RefRoster(util)
       }
     }
   }
@@ -114,5 +187,8 @@ object Sparky {
     spark.sparkContext.setLogLevel("ERROR")
 
     Refresher(spark,"all")
+    spark.sql("SELECT * FROM teams").show()
+    // spark.sql("SELECT * FROM players").show(900, false)
+    spark.sql("SELECT players.ID, players.FullName, players.Position, players.JerseyNumber, teams.Team FROM players INNER JOIN teams ON players.TeamID = teams.ID").show(900,false)
   }
 }
