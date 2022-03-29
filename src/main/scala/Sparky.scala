@@ -2,8 +2,13 @@ import org.apache.spark.sql.SparkSession
 import scala.io.Source
 import java.io._
 import scala.io.StdIn.readLine
+import scala.util.control.Breaks._
 
 object Sparky {
+  var curUser = ""
+  var passwd = ""
+  var cate = ""
+  var times = ""
 
   def RefPastGames(util:SparkSession): Unit ={
     val html = Source.fromURL("https://statsapi.web.nhl.com/api/v1/teams?expand=team.schedule.previous")
@@ -422,9 +427,40 @@ object Sparky {
    */
 
   def Login(util:SparkSession): Unit ={
+    var user = ""
+    var pass = ""
+    var valid = false
 
+    do {
+      println("Username;")
+      user = readLine
+      println("Password;")
+      pass = readLine
+
+      val users = util.table("users")
+      val check = users.select("Username", "Password").collect()
+      breakable {
+        check.foreach(e => {
+          if (e.toString == s"[${user.toLowerCase},$pass]") {
+            valid = true
+            break
+          }
+        })
+      }
+
+      if(valid==false) {
+        println("Username or Password is incorrect. Try again.")
+      }else{
+        val skritt = users.filter(users("Username").equalTo(user.toLowerCase)).select("UserType","Timezone").collect()(0).toString
+        val tick = skritt.split(",")
+        cate = tick(0).substring(1)
+        times = tick(1).substring(0,tick(1).length-1)
+      }
+    } while(valid==false)
+    curUser = user
+    passwd = pass
   }
-  def NewUser(util:SparkSession): Unit ={
+  def NewUser(util:SparkSession,check:Boolean): Unit ={
     var user = ""
     var pass = ""
     var topy = ""
@@ -438,8 +474,8 @@ object Sparky {
     do {
       println("Basic or Admin User?")
       readLine.toLowerCase match {
-        case "basic" || "basic user" || "bu" => topy = "basic"
-        case "admin" || "admin user" || "au" => topy = "admin"
+        case "basic" => topy = "basic"
+        case "admin" => topy = "admin"
         case _ => println("Unclear. Try again.")
       }
     } while(topy=="")
@@ -457,8 +493,39 @@ object Sparky {
     } while(tz=="")
 
     println("Verifying...")
-    
-
+    if(check){
+      var valid = true
+      do {
+        // check the table
+        val users = util.table("users")
+        val check = users.select("Username").collect()
+        valid = true
+        breakable {
+          check.foreach(e => {
+            if (e.toString == s"[${user.toLowerCase}]") {
+              valid = false
+              break
+            }
+          })
+        }
+        if (valid) { // means username is acceptable
+          util.sql("INSERT INTO users VALUES " +
+            s"(\'${user.toLowerCase}\',\'$pass\',\'$topy\',\'$tz\')")
+        } else {
+          println("Username is taken. Please insert a new username.")
+          user = readLine
+        }
+      } while (!valid)
+    }else {
+      // no table? Make one, put us in.
+      util.sql("CREATE TABLE users(Username String,Password String,UserType String,Timezone String)")
+      util.sql("INSERT INTO users VALUES " +
+        s"(\'${user.toLowerCase}\',\'$pass\',\'$topy\',\'$tz\')")
+    }
+    curUser = user
+    passwd = pass
+    cate = topy
+    times = tz
   }
 
   def main(args: Array[String]): Unit = {
@@ -473,7 +540,28 @@ object Sparky {
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
 
-    Refresher(spark,"all")
+    //spark.sql("DROP TABLE IF EXISTS users")
+
+    //spark.sql("SELECT * FROM users").show(false)
+
+    println("[Login | Register]")
+    readLine.toLowerCase match {
+      case "register" => {
+        NewUser(spark,spark.catalog.tableExists("users"))
+      }
+      case "login" => {
+        Login(spark)
+      }
+      case _ => println("idk that lmao")
+    }
+
+    println(s"$curUser,$passwd,$cate,$times")
+
+    //val tempDF = spark.table("teams")
+    //tempDF.show(32,false)
+    // important to keep around ^^
+
+  //  Refresher(spark,"all")
   /*  spark.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name FROM teams").show(32,false)
     // spark.sql("SELECT * FROM players").show(900, false)
     spark.sql("SELECT players.FullName, players.Position, players.JerseyNumber, teams.Team FROM players INNER JOIN teams ON players.TeamID = teams.ID").show(false)
@@ -490,8 +578,7 @@ object Sparky {
     spark.sql("SELECT teams.Team, standings.Conference, standings.Division, standings.GP, standings.W, standings.L, standings.OTL, standings.PTS, " +
       "standings.GPG, standings.GAPG FROM standings " +
       "INNER JOIN teams ON standings.TeamID == teams.ID ORDER BY standings.PTS DESC").show(32,false) */
-
-    // THE ABOVE IS LIKE THIS BECAUSE I AM NOW WORKING ON IMPLEMENTING THE INTERACTION SYSTEM
+  // THE ABOVE IS LIKE THIS BECAUSE I AM NOW WORKING ON IMPLEMENTING THE INTERACTION SYSTEM
 
 
   }
