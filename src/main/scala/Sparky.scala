@@ -4,6 +4,73 @@ import java.io._
 
 object Sparky {
 
+  def RefPastGames(util:SparkSession): Unit ={
+    val html = Source.fromURL("https://statsapi.web.nhl.com/api/v1/teams?expand=team.schedule.previous")
+    val s = html.mkString
+    val resu = s.split("\\\n")
+
+    var cur = ""
+    var tote = ""
+
+    var idtemp = ""
+    var gampk = ""
+    var awaid = 0
+    var homid = 0
+    var date = ""
+    var aScore = 0
+    var hScore = 0
+
+    resu.foreach(e=> {
+      val f = e.trim
+
+      if (f.contains("\"gamePk\"")) {
+        gampk = f.split(":")(1).trim
+        gampk = gampk.substring(0, gampk.length - 1)
+      } else if (f.contains("\"date\" : ")){
+        date = f.split(":")(1).trim
+        date = date.substring(1, date.length - 2)
+      } else if (f == "\"away\" : {") {
+        cur = "away"
+      } else if (f == "\"home\" : {") {
+        cur = "home"
+      } else if(f == "}, {"||f.contains("venue")) {
+        cur = ""
+      }
+
+      if (cur=="away"){
+        if (f.contains("\"score\"")){
+          idtemp = f.split(":")(1).trim
+          aScore = idtemp.substring(0,idtemp.length-1).toInt
+        } else if (f.contains("\"id\"")) {
+          idtemp = f.split(":")(1).trim
+          awaid = idtemp.substring(0,idtemp.length-1).toInt
+        }
+      } else if (cur=="home"){
+        if (f.contains("\"score\"")){
+          idtemp = f.split(":")(1).trim
+          hScore = idtemp.substring(0,idtemp.length-1).toInt
+        } else if (f.contains("\"id\"")) {
+          idtemp = f.split(":")(1).trim
+          homid = idtemp.substring(0,idtemp.length-1).toInt
+
+          if(tote!=""){
+            tote+=s"\n$gampk,$awaid,$aScore,$homid,$hScore,$date"
+          } else {
+            tote+=s"$gampk,$awaid,$aScore,$homid,$hScore,$date"
+          }
+        }
+      }
+    })
+
+    val file = new File("pastGamesFile.csv")
+    val bw = new BufferedWriter(new FileWriter(file))
+    bw.write(tote)
+    bw.close()
+
+    util.sql("DROP TABLE IF EXISTS pastGames")
+    util.sql("CREATE TABLE pastGames(GameID String,AwayID int,AwayScore int,HomeID int,HomeScore int,Date string) row format delimited fields terminated by ','")
+    util.sql("LOAD DATA LOCAL INPATH 'pastGamesFile.csv' INTO TABLE pastGames")
+  }
   def RefNextGames(util:SparkSession): Unit = {
     val html = Source.fromURL("https://statsapi.web.nhl.com/api/v1/teams?expand=team.schedule.next")
     val s = html.mkString
@@ -228,13 +295,14 @@ object Sparky {
     cate match {
       case "teams" => RefTeams(util)
       case "next game" => RefNextGames(util)
-      case "last game" => //
+      case "last game" => RefPastGames(util)
       case "roster" => RefRoster(util)
       case "standings" => //
       case "all" => {
         RefTeams(util)
         RefRoster(util)
-        RefNextGames(util)
+        //RefNextGames(util)
+        RefPastGames(util)
       }
     }
   }
@@ -266,13 +334,18 @@ object Sparky {
     spark.sparkContext.setLogLevel("ERROR")
 
     Refresher(spark,"all")
-    spark.sql("SELECT * FROM teams").show(32,false)
+    spark.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name FROM teams").show(32,false)
     // spark.sql("SELECT * FROM players").show(900, false)
-    spark.sql("SELECT players.ID, players.FullName, players.Position, players.JerseyNumber, teams.Team FROM players INNER JOIN teams ON players.TeamID = teams.ID").show(false)
+    spark.sql("SELECT players.FullName, players.Position, players.JerseyNumber, teams.Team FROM players INNER JOIN teams ON players.TeamID = teams.ID").show(false)
     spark.sql("SELECT DISTINCT nextGames.Date, teams.Team as Away, teams2.Team as Home, nextGames.est as Time FROM nextGames " +
       "INNER JOIN teams ON nextGames.AwayID == teams.ID " +
-      "INNER JOIN teams as teams2 ON nextGames.HomeID == teams2.ID").show(false)
+      "INNER JOIN teams as teams2 ON nextGames.HomeID == teams2.ID " +
+      "ORDER BY nextGames.Date").show(false)
     // yes, this is messy.
     // No, there's not a better way to do it.
+    spark.sql("SELECT DISTINCT pastGames.Date, teams.Team as Away, pastGames.AwayScore, teams2.Team as Home, pastGames.HomeScore FROM pastGames " +
+      "INNER JOIN teams ON pastGames.AwayID == teams.ID " +
+      "INNER JOIN teams as teams2 ON pastGames.HomeID == teams2.ID " +
+      "ORDER BY pastGames.Date").show(false)
   }
 }
