@@ -209,9 +209,9 @@ object Sparky {
             position = position.substring(1,position.length-2)
 
             if(tote!=""){
-              tote+=s"\n$playid,$teamid,$nameFull,$position,$jersey"
+              tote+=s"\n$playid,$nameFull,$position,$jersey,$teamid"
             } else {
-              tote+=s"$playid,$teamid,$nameFull,$position,$jersey"
+              tote+=s"$playid,$nameFull,$position,$jersey,$teamid"
             }
           }
         }
@@ -225,8 +225,16 @@ object Sparky {
     bw.close()
 
     util.sql("DROP TABLE IF EXISTS players")
-    util.sql("CREATE TABLE players(ID int,TeamID int,FullName String,Position String,JerseyNumber String) row format delimited fields terminated by ','")
+    util.sql("CREATE TABLE players(ID int,FullName String,Position String,JerseyNumber String,TeamID int) " +
+      "row format delimited fields terminated by ','")
     util.sql("LOAD DATA LOCAL INPATH 'playersFile.csv' INTO TABLE players")
+    util.sql("DROP TABLE IF EXISTS partiPlayers")
+    util.sql("CREATE TABLE partiPlayers(ID int,FullName String,Position String,JerseyNumber String) PARTITIONED BY (teamid int)")
+    util.sql("INSERT INTO TABLE partiPlayers(SELECT * FROM players WHERE " +
+      "teamid=24 or teamid=53 or teamid=6 or teamid=7 or teamid=20 or teamid=12 or teamid=16 or teamid=21 or teamid=29 or " +
+      "teamid=25 or teamid=17 or teamid=22 or teamid=13 or teamid=26 or teamid=30 or teamid=8 or teamid=18 or teamid=1 or " +
+      "teamid=2 or teamid=3 or teamid=9 or teamid=4 or teamid=5 or teamid=28 or teamid=55 or teamid=19 or teamid=14 or teamid=10 or " +
+      "teamid=23 or teamid=54 or teamid=15 or teamid=52) ORDER BY players.Position")
   }
   def RefTeams(util:SparkSession): Unit ={
     val html = Source.fromURL("https://statsapi.web.nhl.com/api/v1/teams")
@@ -392,9 +400,8 @@ object Sparky {
     util.sql("CREATE TABLE standings(TeamID int,Conference String,Division String,GP int,W int,L int,OTL int,PTS int,GPG double,GAPG double) row format delimited fields terminated by ','")
     util.sql("LOAD DATA LOCAL INPATH 'standingsFile.csv' INTO TABLE standings")
   }
-
-  def Refresher(util:SparkSession,cate:String): Unit ={
-    cate match {
+  def Refresher(util:SparkSession,tirg:String): Unit ={
+    tirg match {
       case "teams" => RefTeams(util)
       case "next game" => RefNextGames(util)
       case "last game" => RefPastGames(util)
@@ -404,27 +411,17 @@ object Sparky {
         RefTeams(util)
         RefRoster(util)
         //RefNextGames(util)
-        // This is commented out because I don't want to refresh this until presentation day.
-        // To demonstrate that the program auto-updates information when requested to.
+        RefPastGames(util)
+        RefStandings(util)
+      }
+      case "notNext" => { // debug & testing purposes
+        RefTeams(util)
+        RefRoster(util)
         RefPastGames(util)
         RefStandings(util)
       }
     }
   }
-
-  /*
-  TODO:
-    Refresher takes a parameter of each table type.
-    Refresher also takes a parameter of our spark session
-    Redownloads and updates the table requested in our spark session
-
-    What kind of tables?
-    General Teams (ID,Team,ABB,Loc,Name)
-    Next Game (TeamID,Home or Away,Opponent)
-    Past Game (TeamID,Score,Home or Away,Score,Opponent)
-    Roster (TeamID,PlayerID,First Name,Last Name, if it gives position, also that)
-    Standings (TeamID,Wins,Losses,OTL,Points)
-   */
 
   def Login(util:SparkSession): Unit ={
     var user = ""
@@ -433,7 +430,7 @@ object Sparky {
 
     do {
       println("Username;")
-      user = readLine
+      user = readLine.toLowerCase.filterNot(_.isWhitespace)
       println("Password;")
       pass = readLine
 
@@ -451,7 +448,7 @@ object Sparky {
       if(valid==false) {
         println("Username or Password is incorrect. Try again.")
       }else{
-        val skritt = users.filter(users("Username").equalTo(user.toLowerCase)).select("UserType","Timezone").collect()(0).toString
+        val skritt = users.filter(users("Username").equalTo(user)).select("UserType","Timezone").collect()(0).toString
         val tick = skritt.split(",")
         cate = tick(0).substring(1)
         times = tick(1).substring(0,tick(1).length-1)
@@ -467,9 +464,16 @@ object Sparky {
     var tz = ""
     // Username, Password, Type, Timezone
     println("Create Username;")
-    user = readLine
-    println("Create password;")
-    pass = readLine
+    user = readLine.toLowerCase.filterNot(_.isWhitespace)
+    do {
+      println("Create password;")
+      pass = readLine
+
+      if(pass.contains(",")) {
+        println("Error, try a different password.")
+        pass = ""
+      }
+    } while (pass=="")
 
     do {
       println("Basic or Admin User?")
@@ -502,7 +506,7 @@ object Sparky {
         valid = true
         breakable {
           check.foreach(e => {
-            if (e.toString == s"[${user.toLowerCase}]") {
+            if (e.toString == s"[$user]") {
               valid = false
               break
             }
@@ -510,17 +514,17 @@ object Sparky {
         }
         if (valid) { // means username is acceptable
           util.sql("INSERT INTO users VALUES " +
-            s"(\'${user.toLowerCase}\',\'$pass\',\'$topy\',\'$tz\')")
+            s"(\'$user\',\'$pass\',\'$topy\',\'$tz\')")
         } else {
           println("Username is taken. Please insert a new username.")
-          user = readLine
+          user = readLine.toLowerCase.filterNot(_.isWhitespace)
         }
       } while (!valid)
     }else {
       // no table? Make one, put us in.
       util.sql("CREATE TABLE users(Username String,Password String,UserType String,Timezone String)")
       util.sql("INSERT INTO users VALUES " +
-        s"(\'${user.toLowerCase}\',\'$pass\',\'$topy\',\'$tz\')")
+        s"(\'$user\',\'$pass\',\'$topy\',\'$tz\')")
     }
     curUser = user
     passwd = pass
@@ -528,7 +532,314 @@ object Sparky {
     times = tz
   }
 
+  def Initial(spark:SparkSession): Unit ={
+    do {
+      println("[Login | Register | Quit]")
+      readLine.toLowerCase match {
+        case "register" => {
+          NewUser(spark, spark.catalog.tableExists("users"))
+          println(s"Welcome, $curUser.")
+          InnerLoop(spark,false)
+        }
+        case "login" => {
+          Login(spark)
+          println(s"Welcome, $curUser.")
+          InnerLoop(spark,false)
+        }
+        case "quit" | "q" => {
+          curUser = "-1"
+          InnerLoop(spark,true)
+        }
+        case _ => println("Input Unclear")
+      }
+    } while (curUser=="")
+  }
+  def InnerLoop(spark:SparkSession,tink:Boolean): Unit ={
+    var quit = tink
+    while (quit==false) {
+      println("[Standings | Teams | Players | Games | Refresh | Logout | Quit]")
+      readLine.toLowerCase match {
+        //case "users" => Users(spark)
+        case "standings" => Standings(spark)
+        case "teams" => Teams(spark)
+        case "refresh" => {
+          println("Refreshing the databases takes a bit of time;")
+          println("[Standings | Teams | Players | Next Games | Last Games | All | Cancel]")
+          readLine.toLowerCase match {
+            case "standings" => Refresher(spark,"standings")
+            case "teams" => Refresher(spark,"teams")
+            case "players" => Refresher(spark,"roster")
+           // case "next" | "next games" | "next game" => Refresher(spark,"next game")
+            case "last" | "last games" | "last game" => Refresher(spark,"last game")
+           // case "all" => Refresher(spark,"all")
+            case "debug" => Refresher(spark,"notNext") // refreshes all but next game
+            case "cancel" => println("Aborted.")
+            case _ => println("Input unclear.")
+          }
+        }
+        case "logout" => {
+          quit = true
+          Initial(spark)
+        }
+        case "quit" | "q" => quit = true
+        case _ => println("Input unclear.")
+      }
+    }
+  }
+
+  def Teams(util:SparkSession): Unit ={
+    println("[All | Specific | Back]")
+    readLine.toLowerCase match {
+      case "all" => {
+        util.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name FROM teams").show(32,false)
+      }
+      case "specific" => {
+        println("[Conference | Division]")
+        readLine.toLowerCase match {
+          case "conference" => {
+            println("[Western | Eastern]")
+            readLine.toLowerCase match {
+              case "western" =>
+                util.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name, standings.Conference, standings.Division FROM teams " +
+                  "INNER JOIN standings ON teams.ID == standings.TeamID WHERE standings.Conference=='Western' ORDER BY standings.Division").show(false)
+              case "eastern" =>
+                util.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name, standings.Conference, standings.Division FROM teams " +
+                  "INNER JOIN standings ON teams.ID == standings.TeamID WHERE standings.Conference=='Eastern' ORDER BY standings.Division").show(false)
+              case _ => Teams(util)
+            }
+          }
+          case "division" => {
+            println("[Atlantic | Metro | Central | Pacific]")
+            readLine.toLowerCase match {
+              case "atlantic" =>
+                util.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name, standings.Division FROM teams " +
+                  "INNER JOIN standings ON teams.ID == standings.TeamID WHERE standings.Division=='Atlantic'").show(false)
+              case "metro" | "metropolitan" =>
+                util.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name, standings.Division FROM teams " +
+                  "INNER JOIN standings ON teams.ID == standings.TeamID WHERE standings.Division=='Metropolitan'").show(false)
+              case "central" =>
+                util.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name, standings.Division FROM teams " +
+                  "INNER JOIN standings ON teams.ID == standings.TeamID WHERE standings.Division=='Central'").show(false)
+              case "pacific" =>
+                util.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name, standings.Division FROM teams " +
+                  "INNER JOIN standings ON teams.ID == standings.TeamID WHERE standings.Division=='Pacific'").show(false)
+              case _ => Teams(util)
+            }
+          }
+          case _ => Teams(util)
+        }
+      }
+      case "back" => // do nothing, we're leaving.
+      case _ => Teams(util)
+    }
+  }
+  def Standings(util:SparkSession): Unit ={
+    var chicken = ""
+    var order = " ORDER BY standings.PTS"
+    var noBack = true
+    println("[League | Conference | Division | Back]")
+    readLine.toLowerCase match {
+      case "league" => // carry on.
+      case "conference" => {
+        println("[Western | Eastern]")
+        readLine.toLowerCase match {
+          case "western" => chicken = " WHERE standings.Conference=='Western'"
+          case "eastern" => chicken = " WHERE standings.Conference=='Eastern'"
+          case _ => Standings(util)
+        }
+      }
+      case "division" => {
+        println("[Atlantic | Metro | Central | Pacific]")
+        readLine.toLowerCase match {
+          case "atlantic" => chicken = " WHERE standings.Division=='Atlantic'"
+          case "metro" => chicken = " WHERE standings.Division=='Metropolitan'"
+          case "central" => chicken = " WHERE standings.Division=='Central'"
+          case "pacific" => chicken = " WHERE standings.Division=='Pacific'"
+        }
+      }
+      case "back" => noBack = false
+      case _ => Standings(util)
+    }
+
+    if (noBack) {
+      while (noBack) {
+        util.sql("SELECT teams.Team, standings.Conference, standings.Division, standings.GP, standings.W, standings.L, standings.OTL, standings.PTS, " +
+          "standings.GPG, standings.GAPG FROM standings " +
+          "INNER JOIN teams ON standings.TeamID == teams.ID"+chicken+order+" DESC").show(32,false)
+        println("Resort?\n[GP | W | L | OTL | PTS | GPG | GAPG | Back]")
+        readLine.toLowerCase match {
+          case "gp" => order = " ORDER BY standings.GP"
+          case "w" => order = " ORDER BY standings.W"
+          case "l" => order = " ORDER BY standings.L"
+          case "otl" => order = " ORDER BY standings.OTL"
+          case "pts" => order = " ORDER BY standings.PTS"
+          case "gpg" => order = " ORDER BY standings.GPG"
+          case "gapg" => order = " ORDER BY standings.GAPG"
+          case "back" => noBack = false
+          case _ => //
+        }
+      }
+    }
+  }
+
+  def Users(util:SparkSession): Unit ={
+    if(cate=="admin") {
+      println("[View | Manage | Back]")
+      readLine.toLowerCase match {
+        case "view" => {
+          println("Enter your password.")
+          if(readLine==passwd){
+            util.sql("SELECT * FROM users").show(false)
+            Users(util)
+          } else {
+            println("Password incorrect.")
+            Users(util)
+          }
+        }
+        case "manage" => {
+          println("Enter your password.")
+          if(readLine==passwd){
+            println("What user to manage?")
+            val targ = readLine.toLowerCase.filterNot(_.isWhitespace)
+            util.sql(s"SELECT * FROM users WHERE users.Username==\'$targ\'")
+            val users = util.table("users")
+            val skritt = users.filter(users("Username").equalTo(targ)).select("Password","UserType","Timezone").collect()(0).toString.split(",")
+            // password = skritt(0).substring(1)
+            // type = skritt(1)
+            // timezone = skritt(2).substring(0,skritt(2).length-1)
+            println("[Update | Delete | Back]")
+            readLine.toLowerCase match {
+              case "update" => {
+                println("[Password | Type | Timezone]")
+                readLine.toLowerCase match {
+                  case "password" | "pass" | "passwd" => {
+                    var tigg=""
+                    do {
+                      println("Enter new password;")
+                      tigg = readLine
+                      if(tigg.contains(",")){
+                        println("Error, try a new password.")
+                        tigg=""
+                      }
+                    }while (tigg=="")
+                    util.sql(s"DELETE FROM users WHERE user.Username==\'$targ\'")
+                    util.sql("INSERT INTO users VALUES " +
+                      s"(\'$targ\',\'$tigg\',\'${skritt(1)}\',\'${skritt(2).substring(0,skritt(2).length-1)}\')")
+                    println("Updated user.")
+                  }
+                  case "type" => {
+                    var alo = 0
+                    if(skritt(1)=="admin"){
+                      if(targ!=curUser){
+                        println("You cannot demote another admin!")
+                      }else{
+                        println("Do you want to change your account to basic?")
+                        alo = -1
+                      }
+                    }else{
+                      println(s"Do you want to promote $targ to admin? This cannot be undone!")
+                      alo = 1
+                    }
+
+                    if(alo!=0){
+                      println("[Y/N]")
+                      if(readLine.toLowerCase=="y"){
+                        util.sql(s"DELETE FROM users WHERE user.Username==\'$targ\'")
+                        if(alo==1) {
+                          util.sql("INSERT INTO users VALUES " +
+                            s"(\'$targ\',\'${skritt(0).substring(1)}\',\'admin\',\'${skritt(2).substring(0, skritt(2).length - 1)}\')")
+                        }else{
+                          util.sql("INSERT INTO users VALUES " +
+                            s"(\'$targ\',\'${skritt(0).substring(1)}\',\'basic\',\'${skritt(2).substring(0, skritt(2).length - 1)}\')")
+                        }
+                        println("Updated user.")
+                      } else {
+                        println("Aborted.")
+                        Users(util)
+                      }
+                    }
+                  }
+                  case "timezone" | "time" | "tz" => {
+                    var tizzy = ""
+                    while (tizzy==""){
+                      println("Enter new timezone;")
+                      println("[EST | CST | MST | PST]")
+                      readLine.toLowerCase match {
+                        case "est" => tizzy="est"
+                        case "cst" => tizzy="cst"
+                        case "mst" => tizzy="mst"
+                        case "pst" => tizzy="pst"
+                        case _ => println("Unclear. Try again.")
+                      }
+                      util.sql(s"DELETE FROM users WHERE user.Username==\'$targ\'")
+                      util.sql("INSERT INTO users VALUES " +
+                        s"(\'$targ\',\'${skritt(0).substring(1)}\',\'${skritt(1)}\',\'$tizzy\')")
+                      println("Updated user.")
+                    }
+                  }
+                  case _ => Users(util)
+                }
+              }
+              case "delete" => {
+                if(skritt(1)=="admin") {
+                  println("Can't delete another admin!")
+                  Users(util)
+                } else {
+                  util.sql(s"DELETE FROM users WHERE users.Username==\'$targ\'")
+                  println("User deleted.")
+                }
+              }
+              case _ => Users(util)
+            }
+          } else {
+            println("Password incorrect.")
+            Users(util)
+          }
+        }
+        case "back" => // Do nothing, we're leaving.
+      }
+    }
+    // Guess this will just not be accessible because delete and update aren't possible with spark ??????????
+  }
+
+  /*
+    TEAM IDs:
+      Anaheim Ducks - 24
+      Arizona Coyotes - 53
+      Boston Bruins - 6
+      Buffalo Sabres - 7
+      Calgary Flames - 20
+      Carolina Hurricanes - 12
+      Chicago Blackhawks - 16
+      Colorado Avalanche - 21
+      Columbus Blue Jackets - 29
+      Dallas Stars - 25
+      Detroit Red Wings - 17
+      Edmonton Oilers - 22
+      Florida Panthers - 13
+      Los Angeles Kings - 26
+      Minnesota Wild - 30
+      Montreal Canadiens - 8
+      Nashville Predators - 18
+      New Jersey Devils - 1
+      New York Islanders - 2
+      New York Rangers - 3
+      Ottawa Senators - 9
+      Philadelphia Flyers - 4
+      Pittsburgh Penguins - 5
+      San Jose Sharks - 28
+      Seattle Kraken - 55
+      St. Louis Blues - 19
+      Tampa Bay Lightning - 14
+      Toronto Maple Leafs - 10
+      Vancouver Canucks - 23
+      Vegas Golden Knights - 54
+      Washington Capitals - 15
+      Winnipeg Jets - 52
+   */
+
   def main(args: Array[String]): Unit = {
+    //<editor-fold desc="Spark Setup">
     System.setProperty("hadoop.home.dir","C:\\hadoop")
     val spark = SparkSession
       .builder
@@ -539,30 +850,13 @@ object Sparky {
       .enableHiveSupport()
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
+    spark.conf.set("hive.exec.dynamic.partition.mode","nonstrict")
+    //</editor-fold>
 
-    //spark.sql("DROP TABLE IF EXISTS users")
+    Initial(spark)
 
-    //spark.sql("SELECT * FROM users").show(false)
-
-    println("[Login | Register]")
-    readLine.toLowerCase match {
-      case "register" => {
-        NewUser(spark,spark.catalog.tableExists("users"))
-      }
-      case "login" => {
-        Login(spark)
-      }
-      case _ => println("idk that lmao")
-    }
-
-    println(s"$curUser,$passwd,$cate,$times")
-
-    //val tempDF = spark.table("teams")
-    //tempDF.show(32,false)
-    // important to keep around ^^
-
-  //  Refresher(spark,"all")
-  /*  spark.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name FROM teams").show(32,false)
+    spark.close()
+  /*
     // spark.sql("SELECT * FROM players").show(900, false)
     spark.sql("SELECT players.FullName, players.Position, players.JerseyNumber, teams.Team FROM players INNER JOIN teams ON players.TeamID = teams.ID").show(false)
     spark.sql("SELECT DISTINCT nextGames.Date, teams.Team as Away, teams2.Team as Home, nextGames.est as Time FROM nextGames " +
