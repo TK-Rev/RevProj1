@@ -410,7 +410,7 @@ object Sparky {
       case "all" => {
         RefTeams(util)
         RefRoster(util)
-        //RefNextGames(util)
+        RefNextGames(util)
         RefPastGames(util)
         RefStandings(util)
       }
@@ -562,6 +562,8 @@ object Sparky {
         //case "users" => Users(spark)
         case "standings" => Standings(spark)
         case "teams" => Teams(spark)
+        case "players" => Players(spark)
+        case "games" => Games(spark)
         case "refresh" => {
           println("Refreshing the databases takes a bit of time;")
           println("[Standings | Teams | Players | Next Games | Last Games | All | Cancel]")
@@ -569,9 +571,9 @@ object Sparky {
             case "standings" => Refresher(spark,"standings")
             case "teams" => Refresher(spark,"teams")
             case "players" => Refresher(spark,"roster")
-           // case "next" | "next games" | "next game" => Refresher(spark,"next game")
+            case "next" | "next games" | "next game" => Refresher(spark,"next game")
             case "last" | "last games" | "last game" => Refresher(spark,"last game")
-           // case "all" => Refresher(spark,"all")
+            case "all" => Refresher(spark,"all")
             case "debug" => Refresher(spark,"notNext") // refreshes all but next game
             case "cancel" => println("Aborted.")
             case _ => println("Input unclear.")
@@ -591,7 +593,7 @@ object Sparky {
     println("[All | Specific | Back]")
     readLine.toLowerCase match {
       case "all" => {
-        util.sql("SELECT teams.Team, teams.ABB, teams.Location, teams.Name FROM teams").show(32,false)
+        util.sql("SELECT * FROM teams ORDER BY teams.Team").show(32,false)
       }
       case "specific" => {
         println("[Conference | Division]")
@@ -655,6 +657,7 @@ object Sparky {
           case "metro" => chicken = " WHERE standings.Division=='Metropolitan'"
           case "central" => chicken = " WHERE standings.Division=='Central'"
           case "pacific" => chicken = " WHERE standings.Division=='Pacific'"
+          case _ => // fasdfas
         }
       }
       case "back" => noBack = false
@@ -676,8 +679,96 @@ object Sparky {
           case "gpg" => order = " ORDER BY standings.GPG"
           case "gapg" => order = " ORDER BY standings.GAPG"
           case "back" => noBack = false
-          case _ => //
+          case _ => // gabaga
         }
+      }
+    }
+  }
+  def Players(util:SparkSession): Unit ={
+    var chicken = ""
+    var noBack = true
+
+    println("[All | Position | Team | Back]")
+    readLine.toLowerCase match {
+      case "position" | "pos" | "p" => {
+        println("[All | Center | Left Wing | Right Wing | Defenseman | Goalie]")
+        readLine.toLowerCase match {
+          case "all" => chicken = ""
+          case "center" => chicken = " WHERE players.Position=='Center'"
+          case "left wing" => chicken = " WHERE players.Position=='Left Wing'"
+          case "right wing" => chicken = " WHERE players.Position=='Right Wing'"
+          case "defenseman" => chicken = " WHERE players.Position=='Defenseman'"
+          case "goalie" => chicken = " WHERE players.Position=='Goalie'"
+          case _ => Players(util)
+        }
+      }
+      case "team" | "t" => {
+        println("Team IDs can be found on the [All] Teams table.")
+        println("[All | <Team ID>]")
+        val nono = readLine
+        nono match {
+          case "all" => chicken = ""
+          case _ => {
+            if(nono.toInt>0) {
+              chicken = " WHERE players.TeamID==" + nono
+            }
+          }
+        }
+      }
+      case "all" => // nothienrgh
+      case "back" => noBack = false
+      case _ => Players(util)
+    }
+
+    if(noBack) {
+      util.sql("SELECT teams.Team, players.FullName, players.Position, players.JerseyNumber FROM players " +
+        "INNER JOIN teams ON players.TeamID = teams.ID" + chicken + " ORDER BY teams.Team").show(900, false)
+    }
+  }
+  def Games(util:SparkSession): Unit ={
+    var callID = 0
+    var chickP = ""
+    var chickN = ""
+    var noBack = true
+    println("[All | Team | Back]")
+    readLine.toLowerCase match {
+      case "all" => // asdfasdf
+      case "team" => {
+        println("Team IDs can be found on the [All] Teams table.")
+        println("[<Team ID> | Back]")
+        val nono = readLine.toLowerCase
+        nono match {
+          case "back" => // afsdfasdf
+          case _ => {
+            if(nono.toInt>0) {
+              chickP = s" WHERE pastGames.AwayID==$nono OR pastGames.HomeID==$nono"
+              chickN = s" WHERE nextGames.AwayID==$nono OR nextGames.HomeID==$nono"
+            }
+          }
+        }
+      }
+      case "back" => noBack = false
+      case _ => Games(util)
+    }
+    if(noBack){
+      println("[Last | Next | Both]")
+      readLine.toLowerCase match {
+        case "last" | "l" => callID = 1
+        case "next" | "n" => callID = 2
+        case "both" | "b" => callID = 3
+        case _ => // asdasdf
+      }
+
+      if(callID==1||callID==3){
+        util.sql("SELECT DISTINCT pastGames.Date, teams.Team as Away, pastGames.AwayScore, teams2.Team as Home, pastGames.HomeScore FROM pastGames " +
+          "INNER JOIN teams ON pastGames.AwayID == teams.ID " +
+          "INNER JOIN teams as teams2 ON pastGames.HomeID == teams2.ID"+chickP+" ORDER BY pastGames.Date").show(false)
+      }
+      if(callID==2||callID==3){
+        var tz = s"nextGames.$times as Time"
+        util.sql(s"SELECT DISTINCT nextGames.Date, teams.Team as Away, teams2.Team as Home, $tz FROM nextGames " +
+          "INNER JOIN teams ON nextGames.AwayID == teams.ID " +
+          "INNER JOIN teams as teams2 ON nextGames.HomeID == teams2.ID"+chickN+" ORDER BY nextGames.Date").show(false)
       }
     }
   }
