@@ -3,6 +3,7 @@ import scala.io.Source
 import java.io._
 import scala.io.StdIn.readLine
 import scala.util.control.Breaks._
+import org.apache.log4j.{Level,Logger}
 
 object Sparky {
   var curUser = ""
@@ -538,12 +539,10 @@ object Sparky {
       readLine.toLowerCase match {
         case "register" => {
           NewUser(spark, spark.catalog.tableExists("users"))
-          println(s"Welcome, $curUser.")
           InnerLoop(spark,false)
         }
         case "login" => {
           Login(spark)
-          println(s"Welcome, $curUser.")
           InnerLoop(spark,false)
         }
         case "quit" | "q" => {
@@ -828,6 +827,7 @@ object Sparky {
         var tz = ""
         do {
           println("Change user's timezone to what?")
+          println("[EST | CST | MST | PST]")
           readLine.toLowerCase match {
             case "est" => tz = "est"
             case "cst" => tz = "cst"
@@ -862,6 +862,8 @@ object Sparky {
   }
 
   def main(args: Array[String]): Unit = {
+    Logger.getLogger("org").setLevel(Level.OFF)
+
     //<editor-fold desc="Spark Setup">
     System.setProperty("hadoop.home.dir","C:\\hadoop")
     val spark = SparkSession
@@ -874,6 +876,7 @@ object Sparky {
       .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     spark.conf.set("hive.exec.dynamic.partition.mode","nonstrict")
+    spark.conf.set("hive.root.logger","FATAL")
     //</editor-fold>
 
     Initial(spark)
