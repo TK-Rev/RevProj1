@@ -558,9 +558,11 @@ object Sparky {
     var quit = tink
     while (quit==false) {
       if(cate=="admin") {
+        println(s"ADMIN: $curUser - Times are in ${times.toUpperCase}.")
         println("[Standings | Teams | Players | Games | Refresh | Admin | Logout | Quit]")
       }else {
-        println("[Standings | Teams | Players | Games | Refresh | Logout | Quit]")
+        println(s"BASIC: $curUser - Times are in ${times.toUpperCase}.")
+        println("[Standings | Teams | Players | Games | Logout | Quit]")
       }
       readLine.toLowerCase match {
         //case "users" => Users(spark)
@@ -569,18 +571,22 @@ object Sparky {
         case "players" => Players(spark)
         case "games" => Games(spark)
         case "refresh" => {
-          println("Refreshing the databases takes a bit of time;")
-          println("[Standings | Teams | Players | Next Games | Last Games | All | Cancel]")
-          readLine.toLowerCase match {
-            case "standings" => Refresher(spark,"standings")
-            case "teams" => Refresher(spark,"teams")
-            case "players" => Refresher(spark,"roster")
-            case "next" | "next games" | "next game" => Refresher(spark,"next game")
-            case "last" | "last games" | "last game" => Refresher(spark,"last game")
-            case "all" => Refresher(spark,"all")
-            case "debug" => Refresher(spark,"notNext") // refreshes all but next game
-            case "cancel" => println("Aborted.")
-            case _ => println("Input unclear.")
+          if(cate=="admin") {
+            println("Refreshing the databases takes a bit of time;")
+            println("[Standings | Teams | Players | Next Games | Last Games | All | Cancel]")
+            readLine.toLowerCase match {
+              case "standings" => Refresher(spark, "standings")
+              case "teams" => Refresher(spark, "teams")
+              case "players" => Refresher(spark, "roster")
+              case "next" | "next games" | "next game" => Refresher(spark, "next game")
+              case "last" | "last games" | "last game" => Refresher(spark, "last game")
+              case "all" => Refresher(spark, "all")
+              case "debug" => Refresher(spark, "notNext") // refreshes all but next game
+              case "cancel" => println("Aborted.")
+              case _ => println("Input unclear.")
+            }
+          } else {
+            println("Input unclear.")
           }
         }
         case "admin" => {
@@ -805,9 +811,51 @@ object Sparky {
   }
 
   def Admin(util:SparkSession): Unit ={
-    println("[View | Back]")
+    println("[View | Manage | Delete | Back]")
     readLine.toLowerCase match {
-      case "view" => util.sql("SELECT users.Username, users.UserType, users.Timezone FROM users").show(100,false)
+      case "view" => {
+        util.sql("SELECT users.Username, users.UserType, users.Timezone FROM users").show(100,false)
+        Admin(util)
+      }
+      case "manage" => {
+        println("Which user to modify?")
+        val targ = readLine.toLowerCase.filterNot(_.isWhitespace)
+        val users = util.table("users")
+        val skritt = users.filter(users("Username").equalTo(targ))
+          .select("Password","UserType").collect()(0).toString
+        val skritts = skritt.split(",")
+
+        var tz = ""
+        do {
+          println("Change user's timezone to what?")
+          readLine.toLowerCase match {
+            case "est" => tz = "est"
+            case "cst" => tz = "cst"
+            case "mst" => tz = "mst"
+            case "pst" => tz = "pst"
+          }
+        } while(tz=="")
+
+        util.sql("DROP TABLE IF EXISTS tempUsers")
+        util.sql("CREATE TABLE tempUsers(Username string,Password string,UserType string,Timezone string)")
+        util.sql(s"INSERT INTO tempUsers (SELECT * FROM users WHERE users.Username <> \'$targ\')")
+        util.sql("INSERT INTO tempUsers VALUES " +
+          s"(\'$targ\',\'${skritts(0).substring(1)}\',\'${skritts(1).substring(0,skritts(1).length-1)}\',\'$tz\')")
+        util.sql("TRUNCATE TABLE users")
+        util.sql("INSERT INTO users (SELECT * FROM tempUsers)")
+        Admin(util)
+      }
+      case "delete" => {
+        println("Which user to delete?")
+        val targ = readLine.toLowerCase.filterNot(_.isWhitespace)
+        util.sql("DROP TABLE IF EXISTS tempUsers")
+        util.sql("CREATE TABLE tempUsers(Username string,Password string,UserType string,Timezone string)")
+        util.sql(s"INSERT INTO tempUsers (SELECT * FROM users WHERE users.Username <> \'$targ\')")
+        util.sql("TRUNCATE TABLE users")
+        util.sql("INSERT INTO users (SELECT * FROM tempUsers)")
+        println("User deleted.")
+        Admin(util)
+      }
       case "back" => // adasd
       case _ => Admin(util)
     }
