@@ -557,7 +557,11 @@ object Sparky {
   def InnerLoop(spark:SparkSession,tink:Boolean): Unit ={
     var quit = tink
     while (quit==false) {
-      println("[Standings | Teams | Players | Games | Refresh | Logout | Quit]")
+      if(cate=="admin") {
+        println("[Standings | Teams | Players | Games | Refresh | Admin | Logout | Quit]")
+      }else {
+        println("[Standings | Teams | Players | Games | Refresh | Logout | Quit]")
+      }
       readLine.toLowerCase match {
         //case "users" => Users(spark)
         case "standings" => Standings(spark)
@@ -577,6 +581,18 @@ object Sparky {
             case "debug" => Refresher(spark,"notNext") // refreshes all but next game
             case "cancel" => println("Aborted.")
             case _ => println("Input unclear.")
+          }
+        }
+        case "admin" => {
+          if(cate=="admin") {
+            println("Enter password.")
+            if(readLine==passwd) {
+              Admin(spark)
+            } else {
+              println("Incorrect password.")
+            }
+          } else {
+            println("Input unclear.") // not admin haha
           }
         }
         case "logout" => {
@@ -647,7 +663,10 @@ object Sparky {
         readLine.toLowerCase match {
           case "western" => chicken = " WHERE standings.Conference=='Western'"
           case "eastern" => chicken = " WHERE standings.Conference=='Eastern'"
-          case _ => Standings(util)
+          case _ => {
+            noBack = false
+            Standings(util)
+          }
         }
       }
       case "division" => {
@@ -661,7 +680,10 @@ object Sparky {
         }
       }
       case "back" => noBack = false
-      case _ => Standings(util)
+      case _ => {
+        noBack = false
+        Standings(util)
+      }
     }
 
     if (noBack) {
@@ -699,7 +721,10 @@ object Sparky {
           case "right wing" => chicken = " WHERE players.Position=='Right Wing'"
           case "defenseman" => chicken = " WHERE players.Position=='Defenseman'"
           case "goalie" => chicken = " WHERE players.Position=='Goalie'"
-          case _ => Players(util)
+          case _ => {
+            noBack = false
+            Players(util)
+          }
         }
       }
       case "team" | "t" => {
@@ -717,7 +742,10 @@ object Sparky {
       }
       case "all" => // nothienrgh
       case "back" => noBack = false
-      case _ => Players(util)
+      case _ => {
+        noBack = false
+        Players(util)
+      }
     }
 
     if(noBack) {
@@ -748,7 +776,10 @@ object Sparky {
         }
       }
       case "back" => noBack = false
-      case _ => Games(util)
+      case _ => {
+        noBack = false
+        Games(util)
+      }
     }
     if(noBack){
       println("[Last | Next | Both]")
@@ -756,7 +787,7 @@ object Sparky {
         case "last" | "l" => callID = 1
         case "next" | "n" => callID = 2
         case "both" | "b" => callID = 3
-        case _ => // asdasdf
+        case _ => Games(util)
       }
 
       if(callID==1||callID==3){
@@ -773,161 +804,14 @@ object Sparky {
     }
   }
 
-  def Users(util:SparkSession): Unit ={
-    if(cate=="admin") {
-      println("[View | Manage | Back]")
-      readLine.toLowerCase match {
-        case "view" => {
-          println("Enter your password.")
-          if(readLine==passwd){
-            util.sql("SELECT * FROM users").show(false)
-            Users(util)
-          } else {
-            println("Password incorrect.")
-            Users(util)
-          }
-        }
-        case "manage" => {
-          println("Enter your password.")
-          if(readLine==passwd){
-            println("What user to manage?")
-            val targ = readLine.toLowerCase.filterNot(_.isWhitespace)
-            util.sql(s"SELECT * FROM users WHERE users.Username==\'$targ\'")
-            val users = util.table("users")
-            val skritt = users.filter(users("Username").equalTo(targ)).select("Password","UserType","Timezone").collect()(0).toString.split(",")
-            // password = skritt(0).substring(1)
-            // type = skritt(1)
-            // timezone = skritt(2).substring(0,skritt(2).length-1)
-            println("[Update | Delete | Back]")
-            readLine.toLowerCase match {
-              case "update" => {
-                println("[Password | Type | Timezone]")
-                readLine.toLowerCase match {
-                  case "password" | "pass" | "passwd" => {
-                    var tigg=""
-                    do {
-                      println("Enter new password;")
-                      tigg = readLine
-                      if(tigg.contains(",")){
-                        println("Error, try a new password.")
-                        tigg=""
-                      }
-                    }while (tigg=="")
-                    util.sql(s"DELETE FROM users WHERE user.Username==\'$targ\'")
-                    util.sql("INSERT INTO users VALUES " +
-                      s"(\'$targ\',\'$tigg\',\'${skritt(1)}\',\'${skritt(2).substring(0,skritt(2).length-1)}\')")
-                    println("Updated user.")
-                  }
-                  case "type" => {
-                    var alo = 0
-                    if(skritt(1)=="admin"){
-                      if(targ!=curUser){
-                        println("You cannot demote another admin!")
-                      }else{
-                        println("Do you want to change your account to basic?")
-                        alo = -1
-                      }
-                    }else{
-                      println(s"Do you want to promote $targ to admin? This cannot be undone!")
-                      alo = 1
-                    }
-
-                    if(alo!=0){
-                      println("[Y/N]")
-                      if(readLine.toLowerCase=="y"){
-                        util.sql(s"DELETE FROM users WHERE user.Username==\'$targ\'")
-                        if(alo==1) {
-                          util.sql("INSERT INTO users VALUES " +
-                            s"(\'$targ\',\'${skritt(0).substring(1)}\',\'admin\',\'${skritt(2).substring(0, skritt(2).length - 1)}\')")
-                        }else{
-                          util.sql("INSERT INTO users VALUES " +
-                            s"(\'$targ\',\'${skritt(0).substring(1)}\',\'basic\',\'${skritt(2).substring(0, skritt(2).length - 1)}\')")
-                        }
-                        println("Updated user.")
-                      } else {
-                        println("Aborted.")
-                        Users(util)
-                      }
-                    }
-                  }
-                  case "timezone" | "time" | "tz" => {
-                    var tizzy = ""
-                    while (tizzy==""){
-                      println("Enter new timezone;")
-                      println("[EST | CST | MST | PST]")
-                      readLine.toLowerCase match {
-                        case "est" => tizzy="est"
-                        case "cst" => tizzy="cst"
-                        case "mst" => tizzy="mst"
-                        case "pst" => tizzy="pst"
-                        case _ => println("Unclear. Try again.")
-                      }
-                      util.sql(s"DELETE FROM users WHERE user.Username==\'$targ\'")
-                      util.sql("INSERT INTO users VALUES " +
-                        s"(\'$targ\',\'${skritt(0).substring(1)}\',\'${skritt(1)}\',\'$tizzy\')")
-                      println("Updated user.")
-                    }
-                  }
-                  case _ => Users(util)
-                }
-              }
-              case "delete" => {
-                if(skritt(1)=="admin") {
-                  println("Can't delete another admin!")
-                  Users(util)
-                } else {
-                  util.sql(s"DELETE FROM users WHERE users.Username==\'$targ\'")
-                  println("User deleted.")
-                }
-              }
-              case _ => Users(util)
-            }
-          } else {
-            println("Password incorrect.")
-            Users(util)
-          }
-        }
-        case "back" => // Do nothing, we're leaving.
-      }
+  def Admin(util:SparkSession): Unit ={
+    println("[View | Back]")
+    readLine.toLowerCase match {
+      case "view" => util.sql("SELECT users.Username, users.UserType, users.Timezone FROM users").show(100,false)
+      case "back" => // adasd
+      case _ => Admin(util)
     }
-    // Guess this will just not be accessible because delete and update aren't possible with spark ??????????
   }
-
-  /*
-    TEAM IDs:
-      Anaheim Ducks - 24
-      Arizona Coyotes - 53
-      Boston Bruins - 6
-      Buffalo Sabres - 7
-      Calgary Flames - 20
-      Carolina Hurricanes - 12
-      Chicago Blackhawks - 16
-      Colorado Avalanche - 21
-      Columbus Blue Jackets - 29
-      Dallas Stars - 25
-      Detroit Red Wings - 17
-      Edmonton Oilers - 22
-      Florida Panthers - 13
-      Los Angeles Kings - 26
-      Minnesota Wild - 30
-      Montreal Canadiens - 8
-      Nashville Predators - 18
-      New Jersey Devils - 1
-      New York Islanders - 2
-      New York Rangers - 3
-      Ottawa Senators - 9
-      Philadelphia Flyers - 4
-      Pittsburgh Penguins - 5
-      San Jose Sharks - 28
-      Seattle Kraken - 55
-      St. Louis Blues - 19
-      Tampa Bay Lightning - 14
-      Toronto Maple Leafs - 10
-      Vancouver Canucks - 23
-      Vegas Golden Knights - 54
-      Washington Capitals - 15
-      Winnipeg Jets - 52
-   */
 
   def main(args: Array[String]): Unit = {
     //<editor-fold desc="Spark Setup">
@@ -947,24 +831,5 @@ object Sparky {
     Initial(spark)
 
     spark.close()
-  /*
-    // spark.sql("SELECT * FROM players").show(900, false)
-    spark.sql("SELECT players.FullName, players.Position, players.JerseyNumber, teams.Team FROM players INNER JOIN teams ON players.TeamID = teams.ID").show(false)
-    spark.sql("SELECT DISTINCT nextGames.Date, teams.Team as Away, teams2.Team as Home, nextGames.est as Time FROM nextGames " +
-      "INNER JOIN teams ON nextGames.AwayID == teams.ID " +
-      "INNER JOIN teams as teams2 ON nextGames.HomeID == teams2.ID " +
-      "ORDER BY nextGames.Date").show(false)
-    // yes, this is messy.
-    // No, there's not a better way to do it.
-    spark.sql("SELECT DISTINCT pastGames.Date, teams.Team as Away, pastGames.AwayScore, teams2.Team as Home, pastGames.HomeScore FROM pastGames " +
-      "INNER JOIN teams ON pastGames.AwayID == teams.ID " +
-      "INNER JOIN teams as teams2 ON pastGames.HomeID == teams2.ID " +
-      "ORDER BY pastGames.Date").show(false)
-    spark.sql("SELECT teams.Team, standings.Conference, standings.Division, standings.GP, standings.W, standings.L, standings.OTL, standings.PTS, " +
-      "standings.GPG, standings.GAPG FROM standings " +
-      "INNER JOIN teams ON standings.TeamID == teams.ID ORDER BY standings.PTS DESC").show(32,false) */
-  // THE ABOVE IS LIKE THIS BECAUSE I AM NOW WORKING ON IMPLEMENTING THE INTERACTION SYSTEM
-
-
   }
 }
