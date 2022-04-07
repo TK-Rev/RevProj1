@@ -7,6 +7,8 @@ This is a simple project built in Scala using Spark SQL to display statistics of
 - Scala
 - Apache Spark
 - Hive
+- Hadoop
+- HDFS
 
 ## Features
 - User Features:
